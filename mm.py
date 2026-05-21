@@ -62,24 +62,42 @@ def parse_quote(text: str):
 
 # ---------- sim mode ----------
 
-def play_sim(contracts: list[dict]) -> None:
+def play_sim(
+    contracts: list[dict],
+    voice_cfg: dict | None = None,
+    cp_noise: float = 0.20,
+) -> None:
     print("\n=== Market-Making Simulator ===")
-    print("Type a two-sided market. Accepted formats:")
-    print("  '1830 at 1840, 5 up'              (size-up: same size both sides)")
-    print("  '1830 bid for 5, 5 at 1840'       (full form)")
-    print("  '1830 1840 5'                     (terse: bid ask size)")
+    if voice_cfg:
+        print(f"Voice mode (Whisper={voice_cfg['whisper']}, LLM={voice_cfg['llm']}).")
+        print("Press Enter to record, Enter again to stop. Or type a quote.")
+    else:
+        print("Type a two-sided market. Accepted formats:")
+        print("  '1830 at 1840, 5 up'              (size-up: same size both sides)")
+        print("  '1830 bid for 5, 5 at 1840'       (full form)")
+        print("  '1830 1840 5'                     (terse: bid ask size)")
+    print(f"Counterparty noise: σ = {cp_noise:.0%} of fair (set --cp-noise 0 for omniscient).")
     print("Special: 'out' to clear, 'quit' to exit.\n")
 
-    score = {"trades": 0, "pnl": 0.0, "good_markets": 0}
+    score = {"trades": 0, "pnl": 0.0, "straddled": 0}
 
     while True:
         contract = random.choice(contracts)
 
         print(f"Contract: {contract['question']}")
-        raw = input("Your market> ").strip()
-        if not raw:
-            continue
-        parsed = parse_quote(raw)
+        if voice_cfg:
+            try:
+                parsed = voice_cfg["module"].voice_quote(
+                    voice_cfg["whisper"], voice_cfg["llm"]
+                )
+            except RuntimeError as e:
+                print(f"[voice] {e}\n")
+                return
+        else:
+            raw = input("Your market> ").strip()
+            if not raw:
+                continue
+            parsed = parse_quote(raw)
         if parsed == "quit":
             break
         if parsed == "out":
@@ -95,22 +113,23 @@ def play_sim(contracts: list[dict]) -> None:
             continue
 
         fair = float(contract["answer"])
+        # Counterparty has a noisy view of fair. Trade decision uses cp_fair;
+        # your real P&L is computed against the true fair, so a counterparty
+        # whose estimate is far off can give you a lucky fill.
+        cp_fair = fair + random.gauss(0, abs(fair) * cp_noise) if cp_noise > 0 else fair
 
-        # Counterparty trades against you if your market gives them positive EV
-        # (assuming they know fair). Otherwise no trade and you survive.
-        if bid > fair:
-            edge = bid - fair
-            pnl = -edge * bid_size
+        if bid <= fair <= ask:
+            score["straddled"] += 1
+
+        if bid > cp_fair:
+            pnl = (fair - bid) * bid_size
             outcome = f"Counterparty SOLD {bid_size} to you at {bid:g}."
-        elif ask < fair:
-            edge = fair - ask
-            pnl = -edge * ask_size
+        elif ask < cp_fair:
+            pnl = (ask - fair) * ask_size
             outcome = f"Counterparty BOUGHT {ask_size} from you at {ask:g}."
         else:
-            edge = 0.0
             pnl = 0.0
-            outcome = "No trade — your market straddles fair value. Solid quote."
-            score["good_markets"] += 1
+            outcome = "No trade — counterparty saw no edge."
 
         score["trades"] += 1
         score["pnl"] += pnl
@@ -118,12 +137,13 @@ def play_sim(contracts: list[dict]) -> None:
         width = ask - bid
         bid_dist = fair - bid
         ask_dist = ask - fair
-        print(f"-> Fair value: {fair:g}")
+        cp_tag = "" if cp_noise == 0 else f"  (counterparty saw: {cp_fair:.2f})"
+        print(f"-> Fair value: {fair:g}{cp_tag}")
         print(f"   Your market: {bid:g} bid for {bid_size}, {ask_size} at {ask:g}  (width {width:g})")
         print(f"   Distance from fair: bid {bid_dist:+g}, ask {ask_dist:+g}")
         print(f"   {outcome}  P&L this round: {pnl:+.2f}")
         print(f"   Session: {score['trades']} rounds | "
-              f"good markets {score['good_markets']} | "
+              f"straddled {score['straddled']} | "
               f"total P&L {score['pnl']:+.2f}\n")
 
 
@@ -132,6 +152,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Market-making practice terminal app")
     ap.add_argument("--data", default=str(default_data),
                     help=f"Path to the data directory (default: {default_data})")
+    ap.add_argument("--voice", action="store_true",
+                    help="Use mic input + local LLM to parse quotes.")
+    ap.add_argument("--whisper-model", default="base.en",
+                    help="faster-whisper model size (e.g. tiny.en, base.en, small.en).")
+    ap.add_argument("--llm-model", default="qwen2.5:1.5b",
+                    help="Ollama model name to use for quote parsing.")
+    ap.add_argument("--cp-noise", type=float, default=0.20,
+                    help="Counterparty's view of fair has Gaussian noise with "
+                         "σ = this fraction of fair (default 0.20). 0 = omniscient.")
     args = ap.parse_args()
 
     data_dir = Path(args.data)
@@ -142,7 +171,15 @@ def main() -> int:
         return 1
 
     print(f"Loaded {len(contracts)} contracts from {data_dir}.")
-    play_sim(contracts)
+    voice_cfg = None
+    if args.voice:
+        import voice_input  # local import: heavy deps only when requested
+        voice_cfg = {
+            "module": voice_input,
+            "whisper": args.whisper_model,
+            "llm": args.llm_model,
+        }
+    play_sim(contracts, voice_cfg, cp_noise=args.cp_noise)
     print("Bye.")
     return 0
 

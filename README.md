@@ -31,6 +31,35 @@ uv run python mm.py
 uv run python mm.py --data /path/to/data
 ```
 
+## Voice mode (optional)
+
+Speak your quote instead of typing. Audio → Whisper (local) → Ollama LLM → structured quote.
+
+One-time setup:
+
+```sh
+# in another terminal — Ollama daemon must be running
+ollama serve
+
+# pull a small instruction-tuned model (~1 GB, fits on a 4 GB GPU)
+ollama pull qwen2.5:1.5b
+```
+
+Then:
+
+```sh
+uv run python mm.py --voice
+# override models if you like:
+uv run python mm.py --voice --whisper-model small.en --llm-model qwen3:8b
+```
+
+Push-to-talk: press Enter to start recording, Enter again to stop. Or type
+a quote at the prompt — anything non-empty bypasses the mic and goes straight
+to the LLM parser, which understands natural phrasing like
+`"thirty bid at forty, five up"` or `"twelve hundred to thirteen hundred, ten up"`.
+
+Whisper auto-detects CUDA. Ollama uses your GPU automatically if it fits.
+
 ## Regenerating data
 
 `data/contracts.json` is built from the TriviaQA `unfiltered.nocontext`
@@ -58,5 +87,11 @@ Each contract is `{id, question, answer}` where `answer` is an int or float.
 | Clear market  | `out` / `i'm out`                |
 | Quit          | `quit`                           |
 
-The counterparty knows the answer and trades only when your quote gives them
-edge: if `bid > answer` they sell to you; if `ask < answer` they buy from you.
+The counterparty has a *noisy* view of the answer — they sample their own
+estimate from a Gaussian centred on the true answer with σ = `--cp-noise`
+× answer (default 20%). They trade against you when their estimate gives them
+edge: if `bid > cp_fair` they sell to you; if `ask < cp_fair` they buy from
+you. Your real P&L is computed against the true answer, so a counterparty
+whose estimate is far off can fill you at a price that's actually in your
+favour — that's the "get lucky" mode. Pass `--cp-noise 0` for an omniscient
+counterparty (pure-skill mode).
