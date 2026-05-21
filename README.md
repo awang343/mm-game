@@ -1,97 +1,39 @@
-# Market Making Practice
+# Market Making
 
-Local Python terminal app for practicing two-sided quoting. The app asks a
-trivia question with a numeric answer, you quote a two-sided market, and a
-counterparty trades against any positive-EV side. A market that straddles
-the answer survives — that's the win condition.
+Practice quoting two-sided markets on numeric-answer trivia. The app asks a
+question, you quote a `bid / ask / size`, a counterparty trades against any
+side that gives them edge, and your P&L is computed against the true answer.
 
-## Layout
+Three components, three folders:
 
-```
-market-making/
-├── data/
-│   └── contracts.json   # numeric-answer trivia questions
-├── populate_data.py     # downloads TriviaQA → contracts.json
-└── mm.py                # terminal app
-```
+| Dir | What | Stack |
+|---|---|---|
+| [`server/`](server/) | Owns `data/contracts.json`. Exposes `GET /contracts/random`. | Python stdlib HTTP (no deps at runtime) |
+| [`python/`](python/) | Desktop terminal client. Voice/TTS/LLM all local. | uv + faster-whisper + Ollama + Piper |
+| [`android/`](android/) | Kotlin/Compose mobile client. | SpeechRecognizer + TextToSpeech + MediaPipe LLM Inference |
 
-## Setup
+Both clients fetch one contract per round over HTTP. The contract schema is
+`{id, question, answer}` where `answer` is a number — the client uses it for
+grading after the round.
 
-This project uses [uv](https://docs.astral.sh/uv/):
-
-```sh
-uv sync                  # install deps from pyproject.toml
-```
-
-## Run
+## Quick start
 
 ```sh
-uv run python mm.py
-# or point at a non-default data directory:
-uv run python mm.py --data /path/to/data
+# 1. start the server (binds 0.0.0.0:7878)
+( cd server && uv sync && uv run python server.py )
+
+# 2. in another terminal — desktop client
+( cd python && uv sync && uv run python mm.py )
+
+# 2b. or open android/ in Android Studio, run on emulator
+#     (the default URL 10.0.2.2:7878 routes to the host's localhost)
 ```
 
-## Voice mode (optional)
+## Notes
 
-Speak your quote instead of typing. Audio → Whisper (local) → Ollama LLM → structured quote.
-
-One-time setup:
-
-```sh
-# in another terminal — Ollama daemon must be running
-ollama serve
-
-# pull a small instruction-tuned model (~1 GB, fits on a 4 GB GPU)
-ollama pull qwen2.5:1.5b
-```
-
-Then:
-
-```sh
-uv run python mm.py --voice
-# override models if you like:
-uv run python mm.py --voice --whisper-model small.en --llm-model qwen3:8b
-```
-
-Push-to-talk: press Enter to start recording, Enter again to stop. Or type
-a quote at the prompt — anything non-empty bypasses the mic and goes straight
-to the LLM parser, which understands natural phrasing like
-`"thirty bid at forty, five up"` or `"twelve hundred to thirteen hundred, ten up"`.
-
-Whisper auto-detects CUDA. Ollama uses your GPU automatically if it fits.
-
-## Regenerating data
-
-`data/contracts.json` is built from the TriviaQA `unfiltered.nocontext`
-config, filtered to questions whose canonical answer is a clean number:
-
-```sh
-uv run python populate_data.py
-```
-
-## Schema
-
-Each contract is `{id, question, answer}` where `answer` is an int or float.
-
-```json
-{ "id": 1, "question": "In which year was CNN founded?", "answer": 1980 }
-```
-
-## Accepted quote formats
-
-| Form          | Example                          |
-|---------------|----------------------------------|
-| Size-up       | `1830 at 1840, 5 up`             |
-| Full          | `1830 bid for 5, 5 at 1840`      |
-| Terse         | `1830 1840 5`                    |
-| Clear market  | `out` / `i'm out`                |
-| Quit          | `quit`                           |
-
-The counterparty has a *noisy* view of the answer — they sample their own
-estimate from a Gaussian centred on the true answer with σ = `--cp-noise`
-× answer (default 20%). They trade against you when their estimate gives them
-edge: if `bid > cp_fair` they sell to you; if `ask < cp_fair` they buy from
-you. Your real P&L is computed against the true answer, so a counterparty
-whose estimate is far off can fill you at a price that's actually in your
-favour — that's the "get lucky" mode. Pass `--cp-noise 0` for an omniscient
-counterparty (pure-skill mode).
+- `QuoteParser` is implemented identically in both clients:
+  `python/quote_parser.py` and `android/app/src/main/java/com/alanxw/marketmaking/QuoteParser.kt`.
+- Counterparty noise (default σ = 20% of fair) is symmetric in both clients —
+  it's what gives you the chance to get lucky vs. a wrong counterparty.
+- Server returns `answer` in the clear; clients use it for grading. Fine for
+  single-user practice; would need a server-side grade endpoint for adversarial use.

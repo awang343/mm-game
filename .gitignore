@@ -10,4 +10,15 @@ wheels/
 .venv
 
 # Generated data (rebuild with populate_data.py)
-data/
+python/data/
+target/
+
+# Android / Gradle
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+*.iml
