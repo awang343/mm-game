@@ -23,6 +23,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Use the auto-generated debug keystore so a personal-device install works
+            // without provisioning a release key. Don't ship this to a store.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
