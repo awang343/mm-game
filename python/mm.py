@@ -3,11 +3,55 @@
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
+import tomllib
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+
+DEFAULT_CONFIG = {
+    "server_url": "http://127.0.0.1:7878",
+    "cp_noise": 0.20,
+    "voice": False,
+    "whisper_model": "small.en",
+    "llm_model": "qwen2.5:3b",
+    "speak": False,
+}
+
+
+def config_path() -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return base / "mm-client" / "config.toml"
+
+
+def load_or_create_config() -> dict:
+    path = config_path()
+    if path.exists():
+        with open(path, "rb") as f:
+            user_cfg = tomllib.load(f)
+        return {**DEFAULT_CONFIG, **user_cfg}
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        "# mm-client configuration\n"
+        "# CLI flags override these values.\n"
+        "\n"
+        f'server_url = "{DEFAULT_CONFIG["server_url"]}"\n'
+        f"cp_noise = {DEFAULT_CONFIG['cp_noise']}\n"
+        "\n"
+        f"voice = {str(DEFAULT_CONFIG['voice']).lower()}\n"
+        f'whisper_model = "{DEFAULT_CONFIG["whisper_model"]}"\n'
+        f'llm_model = "{DEFAULT_CONFIG["llm_model"]}"\n'
+        "\n"
+        f"speak = {str(DEFAULT_CONFIG['speak']).lower()}\n"
+    )
+    path.write_text(body, encoding="utf-8")
+    print(f"[mm] wrote default config to {path}", file=sys.stderr)
+    return dict(DEFAULT_CONFIG)
 
 
 def fetch_contract(server_url: str) -> dict:
@@ -201,19 +245,20 @@ def play_sim(
 
 
 def main() -> int:
+    cfg = load_or_create_config()
     ap = argparse.ArgumentParser(description="Market-making practice terminal app")
-    ap.add_argument("--server", default="http://127.0.0.1:7878",
-                    help="Contract server base URL (default: http://127.0.0.1:7878)")
-    ap.add_argument("--voice", action="store_true",
+    ap.add_argument("--server", default=cfg["server_url"],
+                    help=f"Contract server base URL (default: {cfg['server_url']})")
+    ap.add_argument("--voice", action=argparse.BooleanOptionalAction, default=cfg["voice"],
                     help="Use mic input + local LLM to parse quotes.")
-    ap.add_argument("--whisper-model", default="small.en",
+    ap.add_argument("--whisper-model", default=cfg["whisper_model"],
                     help="faster-whisper model size (e.g. tiny.en, base.en, small.en, medium.en).")
-    ap.add_argument("--llm-model", default="qwen2.5:3b",
+    ap.add_argument("--llm-model", default=cfg["llm_model"],
                     help="Ollama model name to use for quote parsing.")
-    ap.add_argument("--cp-noise", type=float, default=0.20,
+    ap.add_argument("--cp-noise", type=float, default=cfg["cp_noise"],
                     help="Counterparty's view of fair has Gaussian noise with "
-                         "σ = this fraction of fair (default 0.20). 0 = omniscient.")
-    ap.add_argument("--speak", action="store_true",
+                         f"σ = this fraction of fair (default {cfg['cp_noise']}). 0 = omniscient.")
+    ap.add_argument("--speak", action=argparse.BooleanOptionalAction, default=cfg["speak"],
                     help="Read the question and the result aloud via local TTS (Piper).")
     args = ap.parse_args()
 

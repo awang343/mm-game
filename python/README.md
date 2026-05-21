@@ -17,24 +17,46 @@ python/
 └── tts.py                # local Piper text-to-speech
 ```
 
-## Setup
+## Install
 
-This project uses [uv](https://docs.astral.sh/uv/):
+This project uses [uv](https://docs.astral.sh/uv/). For a system-wide install:
 
 ```sh
-uv sync                  # install deps from pyproject.toml
+uv tool install .            # from the python/ dir
+# `mm-client` ends up on PATH (~/.local/bin/mm-client)
+```
+
+Update with `uv tool install --reinstall .` after pulling changes; remove with
+`uv tool uninstall mm-client`.
+
+For one-off runs without installing: `uv sync && uv run python mm.py`.
+
+## Config
+
+First run writes `~/.config/mm-client/config.toml` (respects `XDG_CONFIG_HOME`)
+with these defaults — edit to taste; CLI flags override:
+
+```toml
+server_url = "http://127.0.0.1:7878"
+cp_noise = 0.20
+
+voice = false
+whisper_model = "small.en"
+llm_model = "qwen2.5:3b"
+
+speak = false
 ```
 
 ## Run
 
 ```sh
 # In one terminal — start the contract server
-( cd ../server && uv run python server.py )
+( cd ../server && cargo run --release )
 
-# In another — the client
-uv run python mm.py
-# or point at a non-default server URL:
-uv run python mm.py --server http://192.168.1.42:7878
+# In another — the client (now globally installed)
+mm-client
+# or override the server URL just for this run:
+mm-client --server http://192.168.1.42:7878
 ```
 
 ## Voice mode (optional)
