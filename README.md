@@ -8,7 +8,7 @@ Three components, three folders:
 
 | Dir | What | Stack |
 |---|---|---|
-| [`server/`](server/) | Owns `data/contracts.json`. Exposes `GET /contracts/random`. | Python stdlib HTTP (no deps at runtime) |
+| [`server/`](server/) | Owns `data/contracts.json`. Exposes `GET /contracts/random`. Reads `~/.config/market-making-game/config.toml`. | Rust (`tiny_http`); Python populate script |
 | [`python/`](python/) | Desktop terminal client. Voice/TTS/LLM all local. | uv + faster-whisper + Ollama + Piper |
 | [`android/`](android/) | Kotlin/Compose mobile client. | SpeechRecognizer + TextToSpeech + MediaPipe LLM Inference |
 
@@ -19,8 +19,8 @@ grading after the round.
 ## Quick start
 
 ```sh
-# 1. start the server (binds 0.0.0.0:7878)
-( cd server && uv sync && uv run python server.py )
+# 1. start the server (binds 0.0.0.0:7878; reads ~/.config/market-making-game/config.toml)
+( cd server && cargo run --release )
 
 # 2. in another terminal — desktop client
 ( cd python && uv sync && uv run python mm.py )
