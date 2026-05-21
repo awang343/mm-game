@@ -34,7 +34,7 @@ fn default_port() -> u16 {
 
 fn config_path() -> PathBuf {
     dirs::config_dir()
-        .map(|p| p.join("market-making-game").join("config.toml"))
+        .map(|p| p.join("mm-server").join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
 

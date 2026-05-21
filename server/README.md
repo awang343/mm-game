@@ -21,7 +21,7 @@ cargo run --release
 ```
 
 `cargo run` (or the binary on its own) reads
-`~/.config/market-making-game/config.toml`. If the file doesn't exist, it's
+`~/.config/mm-server/config.toml`. If the file doesn't exist, it's
 created with sensible defaults:
 
 ```toml
