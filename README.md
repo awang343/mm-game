@@ -10,7 +10,7 @@ Three components, three folders:
 |---|---|---|
 | [`server/`](server/) | Owns `data/contracts.json`. Exposes `GET /contracts/random`. Reads `~/.config/market-making-game/config.toml`. | Rust (`tiny_http`); Python populate script |
 | [`python/`](python/) | Desktop terminal client. Voice/TTS/LLM all local. | uv + faster-whisper + Ollama + Piper |
-| [`android/`](android/) | Kotlin/Compose mobile client. | SpeechRecognizer + TextToSpeech + MediaPipe LLM Inference |
+| [`android/`](android/) | Kotlin/Compose mobile client. | Vosk + TextToSpeech (deterministic parser, no LLM) |
 
 Both clients fetch one contract per round over HTTP. The contract schema is
 `{id, question, answer}` where `answer` is a number — the client uses it for

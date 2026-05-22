@@ -1,4 +1,4 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
@@ -9,9 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
-# Generated data (rebuild with populate_data.py)
-python/data/
+# Rust (Cargo build output)
 target/
+
+# Generated data (regenerate with server/populate.py)
+server/data/
 
 # Android / Gradle
 android/.gradle/
@@ -22,3 +24,11 @@ android/local.properties
 android/captures/
 android/.cxx/
 *.iml
+
+# Vosk speech model — downloaded by android/fetch-vosk-model.sh, ~68 MB
+android/app/src/main/assets/vosk-model/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~

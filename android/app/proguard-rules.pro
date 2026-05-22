@@ -1,2 +1,1 @@
-# Keep MediaPipe genai bindings (called via JNI)
--keep class com.google.mediapipe.** { *; }
+# (no app-specific rules — default android-optimize ruleset is sufficient)

@@ -1,54 +1,69 @@
 # Market Making — Android
 
-Native Kotlin/Compose port of the Python desktop app. Uses Android's built-in
-`SpeechRecognizer` (VAD + STT in one call) and `TextToSpeech` (system voice).
-The deterministic `QuoteParser` is a direct port of `python/quote_parser.py`.
-Google AI Edge / MediaPipe LLM Inference is wired in as the parser fallback.
+Native Kotlin/Compose port of the Python desktop app. Speech recognition is
+**Vosk** (bundled small en-US model) with a tight trader vocabulary; quote
+parsing is the deterministic `QuoteParser` (direct port of
+`python/quote_parser.py`). TTS uses Android's system `TextToSpeech`.
+
+## First-time setup
+
+The Vosk speech model (~68 MB unpacked) is **gitignored** — fetch it after
+cloning:
+
+```sh
+cd android
+./fetch-vosk-model.sh
+```
+
+That writes `app/src/main/assets/vosk-model/` (and the `uuid` marker file
+vosk-android needs). Skip this and the build still succeeds but the app will
+crash on the first listen attempt.
 
 ## Build
 
 Open `android/` in Android Studio. Sync should pull AGP 8.7, Kotlin 2.0.20,
-Compose BoM 2024.10.00, and `com.google.mediapipe:tasks-genai`. Min SDK 26,
-target SDK 35.
+Compose BoM 2024.10.00, plus `vosk-android` + `jna`. Min SDK 26, target SDK 35.
 
 CLI build:
 
 ```sh
 cd android
 # one-time: generate gradle wrapper if you have system gradle ≥ 8.10
-gradle wrapper
-./gradlew assembleDebug
-./gradlew installDebug   # or sideload the APK from app/build/outputs/apk
+gradle wrapper --gradle-version 8.10.2
+./gradlew assembleRelease
+./gradlew installRelease    # signs with the debug keystore (dev-only)
 ```
 
 ## Contract server
 
 The app fetches contracts from the HTTP server in `../server/`. Start it
-before launching the app:
+first:
 
 ```sh
-( cd ../server && uv run python server.py )   # binds 0.0.0.0:7878
+( cd ../server && cargo run --release )   # binds 0.0.0.0:7878
 ```
 
-The Android client defaults to `http://10.0.2.2:7878` — emulator-friendly
-(routes to host's localhost). For a physical device on the same wifi,
-override the URL by editing `ContractClient.DEFAULT_URL` (or wire a settings
-screen) to point at the host's LAN IP, e.g. `http://192.168.1.42:7878`.
+Open the app → Settings → enter the server URL the phone can reach
+(`http://10.0.2.2:7878` for an emulator, host LAN IP for a physical device,
+or a tailnet hostname). Saved per-device via SharedPreferences.
 
-## LLM fallback (optional)
+## Speech recognition
 
-`QuoteParser` handles essentially every common quote phrasing on-device with
-no model. The LLM fallback only fires for inputs the deterministic parser
-can't match. To enable it, push a Gemma `.task` model:
+Two paths, picked in Settings:
 
-```sh
-adb shell mkdir -p /data/local/tmp/llm
-adb push gemma-3-1b-it-int4.task /data/local/tmp/llm/gemma.task
-```
+- **Vosk (bundled, recommended)** — on-device, restricted-vocabulary grammar
+  (numbers + trader keywords only — `at`, `bid`, `for`, `up`, `to`, `by`,
+  `offered`, etc.). Works without GMS, no permissions beyond mic. Word
+  timestamps drive automatic comma insertion at pauses, so a quote like
+  *"four [pause] five ten up"* parses correctly as bid=4 / ask=5 / size=10.
+- **System default / installed services** — `SpeechRecognizer` delegating to
+  whatever app registers a `RecognitionService`. Useful if you have FUTO /
+  Sayboard / Google STT installed and prefer those. Often broken on
+  LineageOS without GMS.
 
-Get models from <https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference>.
-If no model is present the app still works — it just re-prompts on unparseable
-input rather than calling the LLM.
+The voice path is intentionally **quote-only**. Actions (skip / repeat /
+quit) live on UI buttons, not in the speech grammar — this keeps Vosk's
+vocabulary tight enough to recognise small numbers reliably.
 
 ## Layout
 
@@ -58,15 +73,18 @@ android/
 │   ├── build.gradle.kts
 │   └── src/main/
 │       ├── AndroidManifest.xml
+│       ├── assets/vosk-model/             # Vosk small en-US (~68 MB, gitignored — fetch via android/fetch-vosk-model.sh)
 │       ├── java/com/alanxw/marketmaking/
-│       │   ├── MainActivity.kt       # Compose UI
-│       │   ├── SimViewModel.kt       # state machine, round loop
-│       │   ├── ContractClient.kt     # HTTP fetch from server
-│       │   ├── Sim.kt                # grading + counterparty noise
-│       │   ├── QuoteParser.kt        # port of python/quote_parser.py
-│       │   ├── VoiceInput.kt         # SpeechRecognizer wrapper
-│       │   ├── Speech.kt             # TextToSpeech wrapper
-│       │   └── LlmFallback.kt        # MediaPipe LLM Inference
+│       │   ├── MainActivity.kt            # Compose UI
+│       │   ├── SimViewModel.kt            # state machine, round loop
+│       │   ├── ContractClient.kt          # HTTP fetch from server
+│       │   ├── SettingsStore.kt           # SharedPreferences wrapper
+│       │   ├── Sim.kt                     # grading + counterparty noise
+│       │   ├── QuoteParser.kt             # port of python/quote_parser.py
+│       │   ├── VoskRecognizer.kt          # bundled Vosk path
+│       │   ├── VoiceInput.kt              # SpeechRecognizer path
+│       │   ├── MicTest.kt                 # raw AudioRecord diagnostics
+│       │   └── Speech.kt                  # TextToSpeech wrapper
 │       └── res/values/{themes,strings}.xml
 ├── build.gradle.kts
 ├── settings.gradle.kts

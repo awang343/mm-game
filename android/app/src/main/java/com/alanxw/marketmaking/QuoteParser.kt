@@ -76,8 +76,9 @@ object QuoteParser {
                         if (tokens[j] != "and") seq.add(tokens[j])
                         j++
                     }
-                    val num = wordsToNum(seq)
-                    if (num != null) out.add(num.toString())
+                    val nextIsUp = j < tokens.size && tokens[j] == "up"
+                    val nums = wordsToNums(seq, nextIsUp)
+                    if (nums.isNotEmpty()) out.add(nums.joinToString(" "))
                     else out.addAll(tokens.subList(i, j))
                     i = j
                 }
@@ -114,14 +115,56 @@ object QuoteParser {
         return kept.joinToString(" ")
     }
 
-    private fun wordsToNum(tokens: List<String>): Int? {
-        if (tokens.isEmpty()) return null
-        // Digit-by-digit: "one nine six five" → 1965
+    /**
+     * Parse a number-word sequence into one or more integers. Multiple values
+     * appear when:
+     *   - a year prefix is followed by more numbers ("nineteen eighty ten" → [1980, 10])
+     *   - `nextIsUp` is true and the last token is a small standalone size word,
+     *     in which case we split it off as a separate size — required because
+     *     Vosk transcripts have no punctuation, so "five ten up" needs to become
+     *     [5, 10] instead of the cardinal sum 15.
+     */
+    private fun wordsToNums(tokens: List<String>, nextIsUp: Boolean = false): List<Int> {
+        if (tokens.isEmpty()) return emptyList()
+
+        // Digit-by-digit: "one nine six five" → [1965]
         if (tokens.size >= 3 && tokens.all { it in ONES }) {
-            return tokens.joinToString("") { ONES[it].toString() }.toInt()
+            return listOf(tokens.joinToString("") { ONES[it].toString() }.toInt())
         }
-        yearForm(tokens)?.let { return it }
-        return standardCardinal(tokens)
+
+        // Size split: if the trailing context is "up" and the last token is
+        // a single-word small size (1..9 or "ten"), peel it off as a separate
+        // number rather than letting it combine with what's before.
+        if (nextIsUp && tokens.size >= 2) {
+            val last = tokens.last()
+            val tail = when {
+                last in ONES -> ONES[last]
+                last == "ten" -> 10
+                else -> null
+            }
+            if (tail != null) {
+                val head = wordsToNums(tokens.dropLast(1), nextIsUp = false)
+                if (head.isNotEmpty()) return head + tail
+            }
+        }
+
+        // Try year form on a 2- or 3-token prefix, recurse on the rest.
+        for (prefixLen in intArrayOf(3, 2)) {
+            if (tokens.size >= prefixLen) {
+                val y = yearForm(tokens.subList(0, prefixLen))
+                if (y != null) return listOf(y) + wordsToNums(tokens.subList(prefixLen, tokens.size), nextIsUp)
+            }
+        }
+
+        // Whole-sequence standard cardinal.
+        standardCardinal(tokens)?.let { return listOf(it) }
+
+        // Fallback: greedy longest-cardinal prefix, then recurse.
+        for (split in tokens.size downTo 1) {
+            val head = standardCardinal(tokens.subList(0, split))
+            if (head != null) return listOf(head) + wordsToNums(tokens.subList(split, tokens.size), nextIsUp)
+        }
+        return emptyList()
     }
 
     private fun smallCardinal(tokens: List<String>): Int? {
@@ -141,9 +184,11 @@ object QuoteParser {
 
     private fun yearForm(tokens: List<String>): Int? {
         if (tokens.isEmpty()) return null
+        // Only "TEENS X" (1100..1999) or "twenty X" (2000..2099) — avoid spurious
+        // matches like "forty five" → 4005.
         val century = when {
             tokens[0] in TEENS -> TEENS[tokens[0]]!! * 100
-            tokens[0] in TENS && tokens.size >= 2 -> TENS[tokens[0]]!! * 100
+            tokens[0] == "twenty" && tokens.size >= 2 -> 2000
             else -> return null
         }
         val rest = smallCardinal(tokens.drop(1)) ?: return null

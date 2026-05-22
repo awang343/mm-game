@@ -57,10 +57,12 @@ def _year_form(tokens):
     """'nineteen sixty-five' → 1965, 'twenty twenty-five' → 2025."""
     if not tokens:
         return None
+    # Only TEENS (1100..1999) or "twenty" (2000..2099) as centuries — accepting
+    # all TENS produced spurious matches like "forty five" → 4005.
     if tokens[0] in _TEENS:
         century = _TEENS[tokens[0]] * 100
-    elif tokens[0] in _TENS and len(tokens) >= 2:
-        century = _TENS[tokens[0]] * 100
+    elif tokens[0] == "twenty" and len(tokens) >= 2:
+        century = 2000
     else:
         return None
     rest = _small_cardinal(tokens[1:])
@@ -93,17 +95,37 @@ def _standard_cardinal(tokens):
     return total + current
 
 
-def _words_to_num(tokens):
-    """Pick the right interpretation for a sequence of number-words."""
+def _words_to_nums(tokens):
+    """Parse a number-word sequence into one or more integers.
+
+    Returns a list so a year prefix can be peeled off and the trailing
+    tokens parsed separately — e.g. 'nineteen eighty ten' → [1980, 10].
+    """
     if not tokens:
-        return None
-    # Digit-by-digit form: 3+ tokens, all single-digit words
+        return []
+
+    # Digit-by-digit: "one nine six five" → [1965]
     if len(tokens) >= 3 and all(t in _ONES for t in tokens):
-        return int("".join(str(_ONES[t]) for t in tokens))
-    yr = _year_form(tokens)
-    if yr is not None:
-        return yr
-    return _standard_cardinal(tokens)
+        return [int("".join(str(_ONES[t]) for t in tokens))]
+
+    # Try year form on a 2- or 3-token prefix, then recurse.
+    for prefix_len in (3, 2):
+        if len(tokens) >= prefix_len:
+            yr = _year_form(tokens[:prefix_len])
+            if yr is not None:
+                return [yr] + _words_to_nums(tokens[prefix_len:])
+
+    # Whole-sequence standard cardinal.
+    full = _standard_cardinal(tokens)
+    if full is not None:
+        return [full]
+
+    # Fallback: greedy longest-cardinal prefix, then recurse.
+    for split in range(len(tokens), 0, -1):
+        head = _standard_cardinal(tokens[:split])
+        if head is not None:
+            return [head] + _words_to_nums(tokens[split:])
+    return []
 
 
 def normalize_numbers(text: str) -> str:
@@ -124,9 +146,9 @@ def normalize_numbers(text: str) -> str:
                 if tokens[j] != "and":
                     seq.append(tokens[j])
                 j += 1
-            num = _words_to_num(seq)
-            if num is not None:
-                out.append(str(num))
+            nums = _words_to_nums(seq)
+            if nums:
+                out.append(" ".join(str(n) for n in nums))
             else:
                 out.extend(tokens[i:j])  # give up — emit raw tokens
             i = j

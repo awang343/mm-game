@@ -9,12 +9,9 @@ import org.json.JSONObject
 
 /**
  * HTTP client for the contract server. One endpoint, one method.
- *
- * Default URL is 10.0.2.2:7878 which the Android emulator routes to the host
- * machine's localhost. For a physical device, pass the LAN IP of the host
- * running `server.py`.
+ * URL is supplied by the caller — see SettingsStore / Settings screen.
  */
-class ContractClient(private val baseUrl: String = DEFAULT_URL) {
+class ContractClient(private val baseUrl: String) {
 
     suspend fun randomContract(): Contract = withContext(Dispatchers.IO) {
         val url = URL(baseUrl.trimEnd('/') + "/contracts/random")
@@ -53,6 +50,7 @@ class ContractClient(private val baseUrl: String = DEFAULT_URL) {
     }
 
     companion object {
-        const val DEFAULT_URL = "http://10.0.2.2:7878"
+        // Useful as a placeholder hint in the settings screen.
+        const val EXAMPLE_URL = "http://192.168.1.42:7878"
     }
 }

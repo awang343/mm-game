@@ -45,6 +45,11 @@ android {
     packaging {
         resources.excludes += "META-INF/{AL2.0,LGPL2.1}"
     }
+
+    // Vosk model files load via mmap; let them stay uncompressed in the APK.
+    androidResources {
+        noCompress += listOf("mdl", "fst", "json", "txt", "dubm", "tree", "carpa")
+    }
 }
 
 dependencies {
@@ -61,8 +66,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Google AI Edge — MediaPipe LLM Inference (Gemma etc.)
-    implementation("com.google.mediapipe:tasks-genai:0.10.18")
+    // Vosk on-device speech recognition (works on LineageOS without GMS)
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("com.alphacephei:vosk-android:0.3.47@aar")
 
     // Kotlinx coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

@@ -19,21 +19,81 @@ data class UiState(
     val lastResult: RoundResult? = null,
     val stats: SessionStats = SessionStats(),
     val errorMessage: String? = null,
+    val serverUrl: String? = null,
+    val useBluetoothMic: Boolean = false,
+    val recognizerKey: String? = null,
+    val availableRecognizers: List<VoiceInput.RecognizerInfo> = emptyList(),
+    val showSettings: Boolean = false,
+    /** Normalised mic level 0..1 while listening, else 0. */
+    val micLevel: Float = 0f,
 )
 
 class SimViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val client = ContractClient()
+    private val settings = SettingsStore(app)
     private val voice = VoiceInput(app)
+    private val vosk = VoskRecognizer(app)
     private val speech = Speech(app)
-    private val llm = LlmFallback(app)
     private val rng = Random(System.nanoTime())
 
-    private val _state = MutableStateFlow(UiState())
+    companion object {
+        const val VOSK_KEY = "vosk:bundled"
+    }
+
+    private val _state = MutableStateFlow(
+        UiState(
+            serverUrl = settings.serverUrl,
+            useBluetoothMic = settings.useBluetoothMic,
+            recognizerKey = settings.recognizerComponent,
+            availableRecognizers = voice.listRecognizers(),
+            showSettings = settings.serverUrl == null,
+        )
+    )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    fun openSettings() {
+        _state.update {
+            it.copy(
+                showSettings = true,
+                availableRecognizers = voice.listRecognizers(),
+            )
+        }
+    }
+
+    fun saveSettings(
+        url: String,
+        useBluetoothMic: Boolean,
+        recognizerKey: String?,
+    ) {
+        val cleaned = url.trim()
+        if (cleaned.isEmpty()) return
+        settings.serverUrl = cleaned
+        settings.useBluetoothMic = useBluetoothMic
+        settings.recognizerComponent = recognizerKey
+        _state.update {
+            it.copy(
+                serverUrl = cleaned,
+                useBluetoothMic = useBluetoothMic,
+                recognizerKey = recognizerKey,
+                showSettings = false,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun cancelSettings() {
+        if (_state.value.serverUrl != null) {
+            _state.update { it.copy(showSettings = false) }
+        }
+    }
 
     fun startRound() {
         if (_state.value.phase == Phase.Listening || _state.value.phase == Phase.Speaking) return
+        val url = _state.value.serverUrl ?: run {
+            _state.update { it.copy(showSettings = true) }
+            return
+        }
+        val client = ContractClient(url)
         viewModelScope.launch {
             val contract = try {
                 client.randomContract()
@@ -46,6 +106,7 @@ class SimViewModel(app: Application) : AndroidViewModel(app) {
             }
             _state.update { it.copy(phase = Phase.Speaking, contract = contract, heardText = null, errorMessage = null) }
             speech.speak(contract.question)
+            speech.lastError?.let { e -> _state.update { it.copy(errorMessage = e) } }
             runListenLoop(contract)
         }
     }
@@ -55,34 +116,57 @@ class SimViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(phase = Phase.Speaking) }
             speech.speak(c.question)
+            speech.lastError?.let { e -> _state.update { it.copy(errorMessage = e) } }
             runListenLoop(c)
         }
     }
 
     private suspend fun runListenLoop(contract: Contract) {
         while (true) {
-            _state.update { it.copy(phase = Phase.Listening) }
-            val transcript = voice.listen()
-            if (transcript.isNullOrBlank()) {
-                // silently re-listen on noise/timeout false-triggers
-                continue
+            _state.update { it.copy(phase = Phase.Listening, micLevel = 0f, errorMessage = null) }
+            val recognizerKey = _state.value.recognizerKey
+            val result = if (recognizerKey == VOSK_KEY) {
+                vosk.listen(
+                    useBluetoothMic = _state.value.useBluetoothMic,
+                    onLevel = { rms ->
+                        _state.update { it.copy(micLevel = (rms * 10f).coerceIn(0f, 1f)) }
+                    },
+                )
+            } else {
+                voice.listen(
+                    useBluetoothMic = _state.value.useBluetoothMic,
+                    recognizerComponent = recognizerKey,
+                    onLevel = { rmsDb ->
+                        val norm = ((rmsDb + 2f) / 12f).coerceIn(0f, 1f)
+                        _state.update { it.copy(micLevel = norm) }
+                    },
+                )
+            }
+            _state.update { it.copy(micLevel = 0f) }
+
+            val transcript = when (result) {
+                is VoiceInput.ListenResult.Text -> result.transcript
+                is VoiceInput.ListenResult.NoMatch -> continue
+                is VoiceInput.ListenResult.Failure -> {
+                    _state.update {
+                        it.copy(
+                            phase = Phase.Error,
+                            errorMessage = "Voice failed: ${result.message}",
+                        )
+                    }
+                    return
+                }
             }
             _state.update { it.copy(heardText = transcript, phase = Phase.Thinking) }
 
-            val action = QuoteParser.shortcircuitAction(transcript)
-            if (action != null) {
-                when (action) {
-                    "repeat" -> { speech.speak(contract.question); continue }
-                    "out"    -> { startRound(); return }
-                    "quit"   -> { _state.update { it.copy(phase = Phase.Idle) }; return }
-                }
-            }
-
-            val det = QuoteParser.parse(transcript)
-            val quote = det ?: tryLlm(transcript)
+            val normalized = QuoteParser.filterToVocab(QuoteParser.normalizeNumbers(transcript))
+            val quote = QuoteParser.parse(transcript)
+            android.util.Log.d("mm-parse", "heard=\"$transcript\"  normalized=\"$normalized\"  parsed=$quote")
             if (quote == null) {
-                val msg = "Sorry, I didn't catch that. Please re-quote your market."
-                speech.speak(msg)
+                _state.update {
+                    it.copy(errorMessage = "Couldn't parse.\nHeard: \"$transcript\"\nNormalized: \"$normalized\"")
+                }
+                speech.speak("Sorry, I didn't catch that. Please re-quote your market.")
                 continue
             }
             if (quote.ask <= quote.bid) {
@@ -92,15 +176,6 @@ class SimViewModel(app: Application) : AndroidViewModel(app) {
 
             grade(contract, quote)
             return
-        }
-    }
-
-    private fun tryLlm(transcript: String): QuoteParser.Quote? {
-        if (!llm.available) return null
-        val r = llm.parse(transcript)
-        return when (r) {
-            is LlmFallback.ParseResult.Quote -> QuoteParser.Quote(r.bid, r.bidSize, r.ask, r.askSize)
-            else -> null
         }
     }
 
